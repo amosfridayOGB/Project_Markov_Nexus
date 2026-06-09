@@ -1,154 +1,484 @@
-import streamlit as st
+import os
+
 import pandas as pd
 import plotly.express as px
-import os
+import streamlit as st
+
 from engine import MarkovAttributionKernel
 
-# =====================================================
-# PAGE CONFIGURATION
-# =====================================================
+# ==========================================================
+# PAGE CONFIG
+# ==========================================================
+
 st.set_page_config(
-    page_title="Markov Chain Attribution Nexus",
+    page_title="Markov Attribution Nexus Enterprise",
     page_icon="🕸️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-st.markdown("""
-<style>
-.main { background-color: #0e1117; color: white; }
-</style>
-""", unsafe_allow_html=True)
-
-# =====================================================
+# ==========================================================
 # HEADER
-# =====================================================
-st.title("🕸️ Algorithmic Markov Chain Attribution Nexus")
-st.markdown("### Predictive State-Transition Modeling & Removal Effect Engine")
-st.markdown("---")
+# ==========================================================
 
-# =====================================================
-# DATA & KERNEL INGESTION
-# =====================================================
-DATA_PATH = os.path.join("core_logic", "user_journey_sequences.csv")
+st.title("🕸️ Markov Attribution Nexus Enterprise")
 
+st.caption(
+    "Revenue Attribution • Markov Modeling • Customer Journey Intelligence"
+)
+
+st.divider()
+
+# ==========================================================
+# DATA PATH
+# ==========================================================
+
+DATA_PATH = os.path.join(
+    "core_logic",
+    "user_journey_sequences.csv"
+)
+
+# ==========================================================
+# LOAD ENGINE
+# ==========================================================
 
 @st.cache_resource
-def initialize_kernel():
-    if not os.path.exists(DATA_PATH):
-        return None
-    kernel = MarkovAttributionKernel(DATA_PATH)
-    kernel.build_transition_matrix()
+def load_kernel():
+
+    kernel = MarkovAttributionKernel(
+        DATA_PATH
+    )
+
+    kernel.execute_pipeline()
+
     return kernel
 
 
-kernel = initialize_kernel()
+kernel = load_kernel()
 
-if kernel is None:
-    st.error(
-        "⚠️ Ingestion Error: Base user journey sequence data missing. Please run 'python generate_journeys.py' first.")
-    st.stop()
+# ==========================================================
+# CORE METRICS
+# ==========================================================
 
-# Run the base calculations
-base_conversion = kernel.simulate_conversion_probability()
-removal_effects = kernel.execute_pipeline()
+summary = kernel.get_summary()
 
-# Transform results to DataFrame for charting
-ui_data = pd.DataFrame([
-    {"Marketing_Channel": channel, "Removal_Effect_Percent": effect * 100}
-    for channel, effect in removal_effects.items()
-]).sort_values("Removal_Effect_Percent", ascending=False)
+removal_effects = kernel.removal_effects
 
-# =====================================================
-# SIDEBAR CONTROLS
-# =====================================================
-st.sidebar.header("⚙️ Simulation Center")
-st.sidebar.markdown(
-    "Select a channel to simulate a **complete programmatic blackout** and witness the cascading structural "
-    "failure across your conversion paths.")
-
-active_blackout = st.sidebar.selectbox(
-    "Simulate Channel Blackout",
-    ["None"] + kernel.channels
+attribution_weights = (
+    kernel.get_attribution_weights()
 )
 
-# Calculate simulated blackout shift
-if active_blackout != "None":
-    simulated_conversion = kernel.simulate_conversion_probability(removal_state=active_blackout)
-    conversion_delta = simulated_conversion - base_conversion
+revenue_attribution = (
+    kernel.get_revenue_attribution()
+)
+
+revenue_loss = (
+    kernel.get_revenue_loss_estimates()
+)
+
+base_conversion = (
+    summary["baseline_conversion"]
+)
+
+# ==========================================================
+# BUILD UI DATAFRAME
+# ==========================================================
+
+ui_data = pd.DataFrame([
+    {
+        "Marketing_Channel": channel,
+        "Removal_Effect":
+            removal_effects.get(channel, 0),
+
+        "Removal_Effect_Percent":
+            removal_effects.get(channel, 0) * 100,
+
+        "Attribution_Share":
+            attribution_weights.get(channel, 0) * 100,
+
+        "Revenue_Attributed":
+            revenue_attribution.get(channel, 0),
+
+        "Revenue_Loss":
+            revenue_loss.get(channel, 0)
+    }
+
+    for channel in kernel.channels
+])
+
+ui_data = ui_data.sort_values(
+    "Removal_Effect_Percent",
+    ascending=False
+)
+
+# ==========================================================
+# SIDEBAR
+# ==========================================================
+
+st.sidebar.header(
+    "Simulation Center"
+)
+
+blackout_channels = st.sidebar.multiselect(
+    "Remove Channels",
+    kernel.channels
+)
+
+# ==========================================================
+# SIMULATION
+# ==========================================================
+
+if blackout_channels:
+
+    simulated_conversion = (
+        kernel.simulate_multi_channel_removal(
+            blackout_channels
+        )
+    )
+
 else:
-    simulated_conversion = base_conversion
-    conversion_delta = 0.0
 
-# =====================================================
-# KPI METRICS DASHBOARD
-# =====================================================
-st.markdown("## 📈 Core Funnel Stability Metrics")
-m1, m2, m3 = st.columns(3)
-
-with m1:
-    st.metric(
-        label="Baseline Conversion Rate",
-        value=f"{base_conversion:.2%}"
+    simulated_conversion = (
+        base_conversion
     )
 
-with m2:
-    st.metric(
-        label="Simulated System Health" if active_blackout != "None" else "System Operational Status",
-        value=f"{simulated_conversion:.2%}",
-        delta=f"{conversion_delta:.2%}" if active_blackout != "None" else None,
-        delta_color="inverse"
+conversion_delta = (
+    simulated_conversion
+    - base_conversion
+)
+
+# ==========================================================
+# KPI DASHBOARD
+# ==========================================================
+
+st.subheader(
+    "Executive Overview"
+)
+
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+
+m1.metric(
+    "Journeys",
+    f"{summary['journeys']:,}"
+)
+
+m2.metric(
+    "Channels",
+    summary["channels"]
+)
+
+m3.metric(
+    "Conversion Rate",
+    f"{base_conversion:.2%}"
+)
+
+m4.metric(
+    "Current Conversion",
+    f"{simulated_conversion:.2%}",
+    delta=f"{conversion_delta:.2%}"
+)
+
+m5.metric(
+    "Revenue",
+    f"${summary['total_revenue']:,.0f}"
+)
+
+m6.metric(
+    "AOV",
+    f"${summary['avg_order_value']:,.2f}"
+)
+
+st.divider()
+
+# ==========================================================
+# TOP INSIGHTS
+# ==========================================================
+
+a, b, c = st.columns(3)
+
+a.metric(
+    "Most Critical Channel",
+    summary["most_critical_channel"]
+)
+
+b.metric(
+    "Least Critical Channel",
+    summary["least_critical_channel"]
+)
+
+c.metric(
+    "Revenue At Risk",
+    f"${ui_data['Revenue_Loss'].max():,.0f}"
+)
+
+# ==========================================================
+# REMOVAL EFFECTS
+# ==========================================================
+
+st.subheader(
+    "Channel Removal Effects"
+)
+
+fig_removal = px.bar(
+    ui_data,
+    x="Marketing_Channel",
+    y="Removal_Effect_Percent",
+    text="Removal_Effect_Percent",
+    color="Removal_Effect_Percent"
+)
+
+fig_removal.update_traces(
+    texttemplate="%{text:.2f}",
+    textposition="outside"
+)
+
+st.plotly_chart(
+    fig_removal,
+    use_container_width=True
+)
+
+# ==========================================================
+# ATTRIBUTION SHARE
+# ==========================================================
+
+st.subheader(
+    "Attribution Share"
+)
+
+fig_pie = px.pie(
+    ui_data,
+    values="Attribution_Share",
+    names="Marketing_Channel",
+    hole=0.4
+)
+
+st.plotly_chart(
+    fig_pie,
+    use_container_width=True
+)
+
+# ==========================================================
+# REVENUE ATTRIBUTION
+# ==========================================================
+
+st.subheader(
+    "Revenue Attribution"
+)
+
+fig_revenue = px.bar(
+    ui_data,
+    x="Marketing_Channel",
+    y="Revenue_Attributed",
+    text="Revenue_Attributed",
+    color="Revenue_Attributed"
+)
+
+fig_revenue.update_traces(
+    texttemplate="$%{text:,.0f}",
+    textposition="outside"
+)
+
+st.plotly_chart(
+    fig_revenue,
+    use_container_width=True
+)
+
+# ==========================================================
+# REVENUE LOSS
+# ==========================================================
+
+st.subheader(
+    "Estimated Revenue Loss"
+)
+
+fig_loss = px.bar(
+    ui_data,
+    x="Marketing_Channel",
+    y="Revenue_Loss",
+    text="Revenue_Loss",
+    color="Revenue_Loss"
+)
+
+fig_loss.update_traces(
+    texttemplate="$%{text:,.0f}",
+    textposition="outside"
+)
+
+st.plotly_chart(
+    fig_loss,
+    use_container_width=True
+)
+
+# ==========================================================
+# CUSTOMER SEGMENTS
+# ==========================================================
+
+segment_df = (
+    kernel.get_segment_summary()
+)
+
+if not segment_df.empty:
+
+    st.subheader(
+        "Customer Segments"
     )
 
-with m3:
-    critical_channel = ui_data.iloc[0]["Marketing_Channel"]
-    st.metric(
-        label="Highest Risk Dependency",
-        value=critical_channel.replace("_", " ").title()
+    left, right = st.columns(2)
+
+    with left:
+
+        fig_seg = px.pie(
+            segment_df,
+            names="customer_segment",
+            values="users"
+        )
+
+        st.plotly_chart(
+            fig_seg,
+            use_container_width=True
+        )
+
+    with right:
+
+        fig_conv = px.bar(
+            segment_df,
+            x="customer_segment",
+            y="conversion_rate",
+            text="conversion_rate"
+        )
+
+        fig_conv.update_traces(
+            texttemplate="%{text:.2%}"
+        )
+
+        st.plotly_chart(
+            fig_conv,
+            use_container_width=True
+        )
+
+# ==========================================================
+# MONTE CARLO
+# ==========================================================
+
+st.subheader(
+    "Conversion Stability Forecast"
+)
+
+forecast = (
+    kernel.monte_carlo_forecast(
+        simulations=1000
+    )
+)
+
+forecast_df = pd.DataFrame(
+    {"conversion": forecast}
+)
+
+fig_forecast = px.histogram(
+    forecast_df,
+    x="conversion",
+    nbins=30
+)
+
+st.plotly_chart(
+    fig_forecast,
+    use_container_width=True
+)
+
+# ==========================================================
+# ATTRIBUTION TABLE
+# ==========================================================
+
+st.subheader(
+    "Attribution Ledger"
+)
+
+display_df = ui_data.copy()
+
+display_df[
+    "Removal_Effect_Percent"
+] = display_df[
+    "Removal_Effect_Percent"
+].map(
+    "{:.2f}%".format
+)
+
+display_df[
+    "Attribution_Share"
+] = display_df[
+    "Attribution_Share"
+].map(
+    "{:.2f}%".format
+)
+
+display_df[
+    "Revenue_Attributed"
+] = display_df[
+    "Revenue_Attributed"
+].map(
+    "${:,.2f}".format
+)
+
+display_df[
+    "Revenue_Loss"
+] = display_df[
+    "Revenue_Loss"
+].map(
+    "${:,.2f}".format
+)
+
+st.dataframe(
+    display_df,
+    hide_index=True,
+    use_container_width=True
+)
+
+# ==========================================================
+# DOWNLOAD
+# ==========================================================
+
+csv_data = ui_data.to_csv(
+    index=False
+)
+
+st.download_button(
+    label="Download Attribution Report",
+    data=csv_data,
+    file_name="markov_attribution_report.csv",
+    mime="text/csv"
+)
+
+# ==========================================================
+# TRANSITION MATRIX
+# ==========================================================
+
+with st.expander(
+    "Transition Matrix"
+):
+
+    st.dataframe(
+        kernel.get_transition_matrix_df(),
+        use_container_width=True
     )
 
-st.markdown("---")
+# ==========================================================
+# RAW DATA
+# ==========================================================
 
-# =====================================================
-# ANALYTICS GRAPH SECTION
-# =====================================================
-left, right = st.columns([3, 2])
+with st.expander(
+    "Dataset Preview"
+):
 
-with left:
-    st.subheader("📊 Channel Removal Effect Index")
-    st.markdown(
-        "This visualization maps out the net conversion volume drop-off incurred if a single node is extracted "
-        "from the transition architecture.")
-
-    fig_bar = px.bar(
-        ui_data,
-        x="Marketing_Channel",
-        y="Removal_Effect_Percent",
-        color="Removal_Effect_Percent",
-        labels={"Removal_Effect_Percent": "Conversion Loss (%)", "Marketing_Channel": "Channel Name"},
-        color_continuous_scale=px.colors.sequential.Reds
+    st.dataframe(
+        kernel.df.head(100),
+        use_container_width=True
     )
-    st.plotly_chart(fig_bar, use_container_width=True)
 
-with right:
-    st.subheader("🏆 Risk Assessment Ledger")
-    st.markdown("Auditable algorithmic weights mapped directly out of our raw transition matrix calculations.")
-
-    # Format for clean display
-    display_df = ui_data.copy()
-    display_df["Removal_Effect_Percent"] = display_df["Removal_Effect_Percent"].map("{:.2f}%".format)
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
-
-# =====================================================
-# DEEP INTERACTION RAW PATH DATA EXPANSER
-# =====================================================
-st.markdown("---")
-with st.expander("🔍 Inspect Underlying User Journey Sequence Paths"):
-    st.dataframe(kernel.df.head(100), use_container_width=True)
-
-# =====================================================
+# ==========================================================
 # FOOTER
-# =====================================================
-st.markdown("---")
+# ==========================================================
+
+st.divider()
+
 st.caption(
-    "Project Markov Nexus • Advanced Algorithmic Attribution Engine • Developed under standard mathematical guidelines")
+    "Markov Attribution Nexus Enterprise"
+)
